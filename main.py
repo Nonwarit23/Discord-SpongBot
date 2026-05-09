@@ -153,7 +153,99 @@ async def poll(interaction: discord.Interaction, question: str, options: str):
     # ... (ส่วนที่เหลือของ poll เหมือนเดิม)
     await interaction.response.send_message("สร้างโหวตสำเร็จ", ephemeral=True)
 
-# (คำสั่งอื่นๆ hello, announce, server_members, timer คงเดิม...)
+@bot.tree.command(name='hello', description="ส่งข้อความทักทายไปที่ห้องประกาศ")
+@is_command_channel()
+async def hello(interaction: discord.Interaction):
+    channel = bot.get_channel(announcement_channel_id)
+    if channel:
+        embed = discord.Embed(title="HELLO!", description="Hello everyone", color=0xFF2056)
+        await channel.send(embed=embed)
+        await interaction.response.send_message("ส่งคำทักทายเรียบร้อย!", ephemeral=True)
+
+@bot.tree.command(name='announce', description="ส่งประกาศเปิดห้อง")
+@is_command_channel()
+@app_commands.describe(
+    room_name='ชื่อห้อง',
+    type='หัวข้อพูดคุย',
+    time_s='เวลาที่เริ่ม',
+    time_t='ถึงเวลา',
+    link='ลิงค์เอกสาร (พิมพ์ - ถ้าไม่มี)',
+    des='รายละเอียดเพิ่มเติม'
+)
+async def announce_room(interaction: discord.Interaction, room_name: str, type: str, time_s: str, time_t: str, link: str, des: str):
+    await interaction.response.defer(ephemeral=True)
+    channel = bot.get_channel(announcement_channel_id)
+
+    embed = discord.Embed(
+        title="📢   ANNOUNCEMENT   📢", 
+        description=f"# 📂 TOPIC: {type}", 
+        color=0xFF2056,
+        timestamp=discord.utils.utcnow()
+    )
+    embed.add_field(name="📍 LOCATION", value=f"```\n{room_name}\n```", inline=False)
+    embed.add_field(name="⏰ DURATION", value=f"**{time_s}** - **{time_t}**", inline=False)
+    embed.add_field(name="​", value="▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬", inline=False)
+
+    if link != '-':
+        actual_link = link if link.startswith('http') else f'https://{link}'
+        embed.add_field(name="📃 DOCUMENT", value=f"🔗 [คลิกเพื่อชมเอกสาร]({actual_link})", inline=False)
+    else:
+        embed.add_field(name="📃 DOCUMENT", value="❌ ไม่มีเอกสารประกอบ", inline=False)
+
+    embed.add_field(name="🎯 INFORMATION", value=f"```fix\n{des}\n```", inline=False)
+    embed.set_footer(text=f"Requested by {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
+
+    if channel:
+        await channel.send(embed=embed)
+        await interaction.followup.send("✅ ส่งประกาศเรียบร้อยแล้ว!", ephemeral=True)
+
+@bot.tree.command(name='server_members', description="สรุปจำนวนสมาชิกและรายชื่อทั้งหมด")
+@is_command_channel()
+async def server_members(interaction: discord.Interaction):
+    await interaction.response.defer()
+    guild = interaction.guild
+    members = [m.display_name for m in guild.members if not m.bot]
+    bot_count = sum(1 for m in guild.members if m.bot)
+    member_list_str = ", ".join(members)
+    if len(member_list_str) > 1024:
+        member_list_str = member_list_str[:1020] + "..."
+
+    embed = discord.Embed(
+        title=f"📊 สรุปข้อมูลสมาชิกใน {guild.name}",
+        color=discord.Color.blue(),
+        timestamp=discord.utils.utcnow()
+    )
+    embed.add_field(name="👥 ทั้งหมด", value=f"**{guild.member_count}**", inline=True)
+    embed.add_field(name="🤖 บอท", value=f"{bot_count}", inline=True)
+    embed.add_field(name="👤 รายชื่อ", value=f"```\n{member_list_str}\n```", inline=False)
+    if guild.icon: embed.set_thumbnail(url=guild.icon.url)
+    await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name='timer', description="Set a timer with 5-minute interval alerts")
+@is_command_channel()
+async def timer(interaction: discord.Interaction, minutes: int, details: str = "Time's up!"):
+    if minutes <= 0:
+        return await interaction.response.send_message("Please enter minutes > 0", ephemeral=True)
+
+    seconds_left = minutes * 60
+    embed = discord.Embed(title="⏲️ Timer Started", description=f"**Task:** {details}\n**Time:** {minutes}m", color=0x3498db)
+    await interaction.response.send_message(embed=embed)
+
+    while seconds_left > 0:
+        if seconds_left > 300:
+            await asyncio.sleep(300)
+            seconds_left -= 300
+            await interaction.channel.send(f"⏳ **Update:** `{seconds_left // 60}m` remaining for: {details}")
+        elif 60 < seconds_left <= 300:
+            await asyncio.sleep(60)
+            seconds_left -= 60
+            await interaction.channel.send(f"⚠️ **Countdown:** `{seconds_left // 60}m` left!")
+        else:
+            await asyncio.sleep(seconds_left)
+            seconds_left = 0
+
+    await interaction.channel.send(f"🔔 {interaction.user.mention} **TIME IS UP!** for **{details}**")
+
 
 server_on()
 bot.run(os.getenv('TOKEN'))
