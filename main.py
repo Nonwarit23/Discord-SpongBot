@@ -13,133 +13,120 @@ s_output = 1502332037917573261
 command_channel_id = 1502332210068324503
 verify = 1502581306913980496
 
-# Role ID (ระบุ Role ที่จะมอบให้เมื่อกดยืนยันตัวตนสำเร็จ)
-VERIFIED_ROLE_ID = 123456789012345678 # <<< เปลี่ยนเป็น ID Role ของคุณ
-
 # Bot Setup
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix='/', intents=intents)
 
-# --- Verification System Components ---
-
-class VerifyRequestView(discord.ui.View):
-    """ปุ่มสำหรับให้ User กดเพื่อขอการยืนยันตัวตน"""
-    def __init__(self):
-        super().__init__(timeout=None) # timeout=None เพื่อให้ปุ่มอยู่ถาวร
-
-    @discord.ui.button(label="ยืนยันตัวตนที่นี่ / Verify Here", style=discord.ButtonStyle.success, custom_id="verify_request_btn")
-    async def request_callback(self, interaction: discord.Interaction):
-        # ตรวจสอบว่ามี Role อยู่แล้วหรือไม่
-        role = interaction.guild.get_role(VERIFIED_ROLE_ID)
-        if role in interaction.user.roles:
-            return await interaction.response.send_message("คุณได้รับการยืนยันตัวตนอยู่แล้วครับ!", ephemeral=True)
-
-        # ส่งข้อความไปยังห้อง Command เพื่อให้ทีมงานตรวจ
-        cmd_channel = bot.get_channel(command_channel_id)
-        if cmd_channel:
-            embed = discord.Embed(
-                title="🔔 คำขอการยืนยันตัวตนใหม่",
-                description=f"ผู้ใช้: {interaction.user.mention}\nID: `{interaction.user.id}`\nกรุณาตรวจสอบและกดยืนยันด้านล่าง",
-                color=discord.Color.blue()
-            )
-            embed.set_thumbnail(url=interaction.user.display_avatar.url)
-            
-            view = AdminApproveView(target_user=interaction.user)
-            await cmd_channel.send(embed=embed, view=view)
-            await interaction.response.send_message("ส่งคำขอไปยังทีมงานแล้ว กรุณารอสักครู่ครับ", ephemeral=True)
-        else:
-            await interaction.response.send_message("❌ เกิดข้อผิดพลาด: ไม่พบห้องสำหรับทีมงาน", ephemeral=True)
-
-class AdminApproveView(discord.ui.View):
-    """ปุ่มสำหรับให้ Admin กดยืนยันให้ User"""
-    def __init__(self, target_user):
-        super().__init__(timeout=None)
-        self.target_user = target_user
-
-    @discord.ui.button(label="Approve (ยืนยัน)", style=discord.ButtonStyle.green)
-    async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
-        role = interaction.guild.get_role(VERIFIED_ROLE_ID)
-        if not role:
-            return await interaction.response.send_message("❌ ไม่พบ Role สำหรับยืนยันตัวตน กรุณาเช็ค ID ในโค้ด", ephemeral=True)
-
-        try:
-            await self.target_user.add_roles(role)
-            # ปิดการทำงานของปุ่ม
-            for item in self.children:
-                item.disabled = True
-            
-            embed = interaction.message.embeds[0]
-            embed.title = "✅ ยืนยันตัวตนสำเร็จ"
-            embed.color = discord.Color.green()
-            embed.add_field(name="ดำเนินการโดย", value=interaction.user.mention)
-            
-            await interaction.response.edit_message(embed=embed, view=self)
-            
-            # แจ้งเตือนผู้ใช้ (ถ้า DM เปิดอยู่)
-            try:
-                await self.target_user.send(f"🎉 คุณได้รับการยืนยันตัวตนในเซิร์ฟเวอร์ **{interaction.guild.name}** เรียบร้อยแล้ว!")
-            except:
-                pass
-        except Exception as e:
-            await interaction.response.send_message(f"เกิดข้อผิดพลาด: {e}", ephemeral=True)
-
 @bot.event
 async def on_ready():
     print(f'[System] Bot {bot.user} is now Online')
-    # ทำให้ปุ่ม Verify ทำงานตลอดเวลาแม้บอทรีสตาร์ท
-    bot.add_view(VerifyRequestView())
     try:
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} slash command(s)")
     except Exception as e:
         print(f"Sync error: {e}")
 
-@bot.tree.error
-async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    if isinstance(error, app_commands.CheckFailure):
-        await interaction.response.send_message(
-            f"❌ คุณสามารถใช้คำสั่งได้เฉพาะในห้อง <#{command_channel_id}> เท่านั้นครับ", 
-            ephemeral=True
+# --- Welcome/Leave System ---
+@bot.event
+async def on_member_join(member):
+    channel = bot.get_channel(s_output)
+    if channel:
+        embed = discord.Embed(
+            title="Welcome to the server!", 
+            description=f"Welcome to the Sponglium play & study center, {member.mention}!", 
+            color=0xFFD230
         )
+        await channel.send(embed=embed)
 
-# --- Check Function ---
-def is_command_channel():
-    def predicate(interaction: discord.Interaction) -> bool:
-        return interaction.channel_id == command_channel_id
-    return app_commands.check(predicate)
+@bot.event
+async def on_member_remove(member):
+    channel = bot.get_channel(s_output)
+    if channel:
+        embed = discord.Embed(
+            title="Leave the server!", 
+            description=f"{member.mention} has left the server!", 
+            color=0xFF2056
+        )
+        await channel.send(embed=embed)
+
+# --- Vote System Components ---
+class PollView(discord.ui.View):
+    def __init__(self, options, creator, timeout=None):
+        super().__init__(timeout=timeout)
+        self.options = options
+        self.creator = creator # เก็บข้อมูลคนสร้าง Poll
+        self.votes = {option: 0 for option in options}
+        self.voters = set()
+        
+        # สร้างปุ่มตัวเลือก
+        for option in self.options:
+            button = discord.ui.Button(label=option, style=discord.ButtonStyle.primary, custom_id=option)
+            button.callback = self.button_callback
+            self.add_item(button)
+            
+        # เพิ่มปุ่มสำหรับปิดโหวต (เฉพาะคนสร้าง)
+        close_button = discord.ui.Button(label="Close Poll", style=discord.ButtonStyle.danger, custom_id="close_poll")
+        close_button.callback = self.close_callback
+        self.add_item(close_button)
+
+    async def button_callback(self, interaction: discord.Interaction):
+        if interaction.user.id in self.voters:
+            return await interaction.response.send_message("คุณได้ลงคะแนนไปแล้ว!", ephemeral=True)
+        
+        custom_id = interaction.data['custom_id']
+        self.votes[custom_id] += 1
+        self.voters.add(interaction.user.id)
+        
+        await self.update_poll_message(interaction)
+
+    async def close_callback(self, interaction: discord.Interaction):
+        # ตรวจสอบว่าใช่คนสร้าง Poll หรือไม่
+        if interaction.user.id != self.creator.id:
+            return await interaction.response.send_message("เฉพาะผู้สร้าง Poll เท่านั้นที่ปิดโหวตได้!", ephemeral=True)
+        
+        # ปิดการทำงานของปุ่มทั้งหมด
+        for item in self.children:
+            item.disabled = True
+            
+        embed = interaction.message.embeds[0]
+        embed.title = "📊 POLL CLOSED (สิ้นสุดการโหวต)"
+        embed.color = discord.Color.red()
+        
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def update_poll_message(self, interaction):
+        total_votes = len(self.voters)
+        embed = interaction.message.embeds[0]
+        embed.clear_fields()
+        
+        for opt, count in self.votes.items():
+            percentage = (count / total_votes * 100) if total_votes > 0 else 0
+            bar_count = int(percentage / 10)
+            bar = "🟩" * bar_count + "⬜" * (10 - bar_count)
+            embed.add_field(
+                name=f"🔹 {opt}", 
+                value=f"{bar} **{count}** votes ({percentage:.1f}%)", 
+                inline=False
+            )
+        
+        embed.set_footer(text=f"Total Voters: {total_votes} | Last update: {interaction.user.display_name}")
+        await interaction.response.edit_message(embed=embed, view=self)
 
 # --- Slash Commands ---
 
-@bot.tree.command(name='setup_verify', description="ส่งปุ่มยืนยันตัวตนไปยังห้อง Verify (Admin Only)")
-@is_command_channel()
-async def setup_verify(interaction: discord.Interaction):
-    verify_channel = bot.get_channel(verify)
-    if verify_channel:
-        embed = discord.Embed(
-            title="🔒 การยืนยันตัวตน (Verification)",
-            description="ยินดีต้อนรับสู่ Sponglium! กรุณากดปุ่มด้านล่างเพื่อส่งคำขอยืนยันตัวตนเข้าสู่เซิร์ฟเวอร์",
-            color=0x2ecc71
-        )
-        embed.set_footer(text="เมื่อกดแล้ว ทีมงานจะตรวจสอบและอนุมัติให้เร็วที่สุด")
-        
-        view = VerifyRequestView()
-        await verify_channel.send(embed=embed, view=view)
-        await interaction.response.send_message(f"✅ ส่งระบบยืนยันตัวตนไปที่ {verify_channel.mention} เรียบร้อย!", ephemeral=True)
-    else:
-        await interaction.response.send_message("❌ ไม่พบห้อง Verify", ephemeral=True)
-
 @bot.tree.command(name='poll', description="สร้างระบบโหวตและส่งไปยังห้องประกาศ")
-@is_command_channel()
 @app_commands.describe(
     question='หัวข้อการโหวต',
     options='ตัวเลือก (แยกด้วยเครื่องหมายจุลภาค , เช่น ใช่,ไม่ หรือ A,B,C)'
 )
 async def poll(interaction: discord.Interaction, question: str, options: str):
-    # (โค้ดเดิมคงไว้...)
     option_list = [opt.strip() for opt in options.split(',')]
     if len(option_list) < 2:
         return await interaction.response.send_message("กรุณาใส่ตัวเลือกอย่างน้อย 2 อย่าง (เช่น ใช่,ไม่)", ephemeral=True)
-    
+    if len(option_list) > 5:
+        return await interaction.response.send_message("จำกัดสูงสุด 5 ตัวเลือก เพื่อความสวยงาม", ephemeral=True)
+
+    # ค้นหาช่องประกาศ
     channel = bot.get_channel(announcement_channel_id)
     if not channel:
         return await interaction.response.send_message("❌ ไม่พบแชนแนลสำหรับประกาศ กรุณาตรวจสอบ ID", ephemeral=True)
@@ -150,11 +137,21 @@ async def poll(interaction: discord.Interaction, question: str, options: str):
         color=0x5865F2,
         timestamp=discord.utils.utcnow()
     )
-    # ... (ส่วนที่เหลือของ poll เหมือนเดิม)
-    await interaction.response.send_message("สร้างโหวตสำเร็จ", ephemeral=True)
+
+    for opt in option_list:
+        embed.add_field(name=f"🔹 {opt}", value="⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ **0** votes (0%)", inline=False)
+    
+    embed.set_footer(text=f"Total Voters: 0 | Created by {interaction.user.display_name}")
+    
+    view = PollView(option_list, interaction.user)
+    
+    # ส่งโหวตไปยังช่องประกาศ
+    await channel.send(embed=embed, view=view)
+    
+    # ตอบกลับผู้ใช้ว่าส่งเรียบร้อยแล้ว
+    await interaction.response.send_message(f"✅ สร้างโหวตเรียบร้อยแล้วและส่งไปยัง {channel.mention}", ephemeral=True)
 
 @bot.tree.command(name='hello', description="ส่งข้อความทักทายไปที่ห้องประกาศ")
-@is_command_channel()
 async def hello(interaction: discord.Interaction):
     channel = bot.get_channel(announcement_channel_id)
     if channel:
@@ -163,7 +160,6 @@ async def hello(interaction: discord.Interaction):
         await interaction.response.send_message("ส่งคำทักทายเรียบร้อย!", ephemeral=True)
 
 @bot.tree.command(name='announce', description="ส่งประกาศเปิดห้อง")
-@is_command_channel()
 @app_commands.describe(
     room_name='ชื่อห้อง',
     type='หัวข้อพูดคุย',
@@ -200,7 +196,6 @@ async def announce_room(interaction: discord.Interaction, room_name: str, type: 
         await interaction.followup.send("✅ ส่งประกาศเรียบร้อยแล้ว!", ephemeral=True)
 
 @bot.tree.command(name='server_members', description="สรุปจำนวนสมาชิกและรายชื่อทั้งหมด")
-@is_command_channel()
 async def server_members(interaction: discord.Interaction):
     await interaction.response.defer()
     guild = interaction.guild
@@ -222,7 +217,6 @@ async def server_members(interaction: discord.Interaction):
     await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name='timer', description="Set a timer with 5-minute interval alerts")
-@is_command_channel()
 async def timer(interaction: discord.Interaction, minutes: int, details: str = "Time's up!"):
     if minutes <= 0:
         return await interaction.response.send_message("Please enter minutes > 0", ephemeral=True)
@@ -246,6 +240,6 @@ async def timer(interaction: discord.Interaction, minutes: int, details: str = "
 
     await interaction.channel.send(f"🔔 {interaction.user.mention} **TIME IS UP!** for **{details}**")
 
-
 server_on()
+
 bot.run(os.getenv('TOKEN'))
