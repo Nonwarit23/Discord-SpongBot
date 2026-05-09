@@ -8,10 +8,10 @@ import asyncio
 
 
 # Channel IDs
-schedule = 1502332460355027026
-announcement_channel_id = 1502332375894589613
-s_output = 1502332421276700723
-command_channel_id = 1502332277072597052
+schedule = 1502332277072597052
+announcement_channel_id = 1502331959517384828
+s_output = 1502332037917573261
+command_channel_id = 1502332210068324503
 
 # Bot Setup
 intents = discord.Intents.all()
@@ -25,6 +25,20 @@ async def on_ready():
         print(f"Synced {len(synced)} slash command(s)")
     except Exception as e:
         print(f"Sync error: {e}")
+
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.CheckFailure):
+        await interaction.response.send_message(
+            f"❌ คุณสามารถใช้คำสั่งได้เฉพาะในห้อง <#{command_channel_id}> เท่านั้นครับ", 
+            ephemeral=True
+        )
+
+# --- [ส่วนที่เพิ่มใหม่ 2] ฟังก์ชันสำหรับเช็คห้องคำสั่ง ---
+def is_command_channel():
+    def predicate(interaction: discord.Interaction) -> bool:
+        return interaction.channel_id == command_channel_id
+    return app_commands.check(predicate)
 
 # --- Welcome/Leave System ---
 @bot.event
@@ -115,6 +129,7 @@ class PollView(discord.ui.View):
 # --- Slash Commands ---
 
 @bot.tree.command(name='poll', description="สร้างระบบโหวตและส่งไปยังห้องประกาศ")
+@is_command_channel()
 @app_commands.describe(
     question='หัวข้อการโหวต',
     options='ตัวเลือก (แยกด้วยเครื่องหมายจุลภาค , เช่น ใช่,ไม่ หรือ A,B,C)'
@@ -126,7 +141,6 @@ async def poll(interaction: discord.Interaction, question: str, options: str):
     if len(option_list) > 5:
         return await interaction.response.send_message("จำกัดสูงสุด 5 ตัวเลือก เพื่อความสวยงาม", ephemeral=True)
 
-    # ค้นหาช่องประกาศ
     channel = bot.get_channel(announcement_channel_id)
     if not channel:
         return await interaction.response.send_message("❌ ไม่พบแชนแนลสำหรับประกาศ กรุณาตรวจสอบ ID", ephemeral=True)
@@ -144,14 +158,11 @@ async def poll(interaction: discord.Interaction, question: str, options: str):
     embed.set_footer(text=f"Total Voters: 0 | Created by {interaction.user.display_name}")
     
     view = PollView(option_list, interaction.user)
-    
-    # ส่งโหวตไปยังช่องประกาศ
     await channel.send(embed=embed, view=view)
-    
-    # ตอบกลับผู้ใช้ว่าส่งเรียบร้อยแล้ว
     await interaction.response.send_message(f"✅ สร้างโหวตเรียบร้อยแล้วและส่งไปยัง {channel.mention}", ephemeral=True)
 
 @bot.tree.command(name='hello', description="ส่งข้อความทักทายไปที่ห้องประกาศ")
+@is_command_channel()
 async def hello(interaction: discord.Interaction):
     channel = bot.get_channel(announcement_channel_id)
     if channel:
@@ -160,6 +171,7 @@ async def hello(interaction: discord.Interaction):
         await interaction.response.send_message("ส่งคำทักทายเรียบร้อย!", ephemeral=True)
 
 @bot.tree.command(name='announce', description="ส่งประกาศเปิดห้อง")
+@is_command_channel()
 @app_commands.describe(
     room_name='ชื่อห้อง',
     type='หัวข้อพูดคุย',
@@ -196,6 +208,7 @@ async def announce_room(interaction: discord.Interaction, room_name: str, type: 
         await interaction.followup.send("✅ ส่งประกาศเรียบร้อยแล้ว!", ephemeral=True)
 
 @bot.tree.command(name='server_members', description="สรุปจำนวนสมาชิกและรายชื่อทั้งหมด")
+@is_command_channel()
 async def server_members(interaction: discord.Interaction):
     await interaction.response.defer()
     guild = interaction.guild
@@ -217,6 +230,7 @@ async def server_members(interaction: discord.Interaction):
     await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name='timer', description="Set a timer with 5-minute interval alerts")
+@is_command_channel()
 async def timer(interaction: discord.Interaction, minutes: int, details: str = "Time's up!"):
     if minutes <= 0:
         return await interaction.response.send_message("Please enter minutes > 0", ephemeral=True)
